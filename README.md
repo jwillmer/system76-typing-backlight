@@ -114,7 +114,24 @@ journalctl -u kbd-backlight-typing -f
 
 ## Privacy
 
-The daemon reads every keystroke (it has to, in order to detect typing activity), but it does **not** log, store, transmit, or interpret keys. It only counts that an event happened. The code is short — read it, not me. There is no network code anywhere in the project.
+The daemon reads every keystroke (it has to, in order to detect typing activity), but it does **not** log, store, transmit, or interpret keys. It only counts that an event happened.
+
+You don't have to take my word for it — the relevant code is six lines, in [`kbd-backlight-typing` lines 170–180](kbd-backlight-typing#L170-L180):
+
+```python
+events = poll.poll(1000)
+now = time.monotonic()
+if events:
+    for fd, _ in events:
+        try:
+            while os.read(fd, EVENT_SIZE * 64):
+                pass        # buffer is read and discarded; keys are never parsed
+        except BlockingIOError:
+            pass
+        last_activity = now
+```
+
+The buffer returned by `os.read` is never assigned, decoded, copied, hashed, or transmitted — it's read into a temporary and immediately dropped. That's the whole interaction with keyboard data. There is no network code anywhere in the project (`grep -rE 'socket|http|requests|urllib' .` will return nothing of substance).
 
 ## Contributing
 
