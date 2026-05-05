@@ -16,6 +16,7 @@ Built because System76 / Pop!_OS ship no built-in "backlight on typing" feature,
 - **Inactive brightness** after idle (0 = fully off, or set a low glow)
 - **Idle timeout** in seconds before dropping from active to inactive
 - **Master enable** toggle — when off, the daemon stays running but does not touch the LED
+- **Always-on schedule** — optionally keep the backlight at the active level during a wall-clock window (e.g. 21:00–06:00 for nighttime typing), wrapping over midnight
 - **GTK settings app** in the application launcher ("Keyboard Backlight (Typing)")
 - **Polkit-mediated config writes** — the GUI prompts once for admin auth (cached ~5 min) and the daemon restarts automatically
 - **Single interactive setup script** for install, reinstall, uninstall, and status (also supports non-interactive subcommands)
@@ -59,6 +60,8 @@ Open **Keyboard Backlight (Typing)** from the application launcher. Adjust:
 | Active brightness   | 0–`max`          | 128     | Brightness while typing                      |
 | Inactive brightness | 0–`max`          | 0       | Brightness after the idle timeout            |
 | Idle seconds        | 1–86400          | 60      | How long before going inactive               |
+| Schedule enabled    | toggle           | off     | Keep the backlight on during a time window   |
+| From / to (HH:MM)   | 24h time         | 21:00 / 06:00 | The window — wraps midnight when from > to |
 
 `max` is read from `/sys/class/leds/*kbd_backlight*/max_brightness` (typically 255 on System76).
 
@@ -72,7 +75,12 @@ enabled = true
 active_brightness = 128
 inactive_brightness = 0
 idle_seconds = 60
+always_on_enabled = false
+always_on_from = 21:00
+always_on_to = 06:00
 ```
+
+When `always_on_enabled = true`, the daemon keeps the backlight at `active_brightness` for any wall-clock time in `[always_on_from, always_on_to)`. If `always_on_from > always_on_to` the window wraps over midnight (e.g. `21:00`–`06:00`). Outside the window, normal "active while typing, inactive after idle" behaviour resumes.
 
 After hand-editing, run `sudo systemctl restart kbd-backlight-typing`.
 

@@ -5,8 +5,14 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 4 ]; then
-    echo "usage: $0 <enabled:true|false> <active:int> <inactive:int> <idle_seconds:1-86400>" >&2
+if [ "$#" -ne 7 ]; then
+    cat >&2 <<EOF
+usage: $0 <enabled> <active> <inactive> <idle_seconds> <always_on_enabled> <always_on_from> <always_on_to>
+  enabled, always_on_enabled : true|false
+  active, inactive           : integer 0..max_brightness
+  idle_seconds               : integer 1..86400
+  always_on_from / _to       : HH:MM (24h)
+EOF
     exit 2
 fi
 
@@ -14,6 +20,9 @@ ENABLED="$1"
 ACTIVE="$2"
 INACTIVE="$3"
 IDLE="$4"
+ALWAYS_ON_ENABLED="$5"
+ALWAYS_ON_FROM="$6"
+ALWAYS_ON_TO="$7"
 
 # Discover the keyboard LED's max brightness; fall back to 255 if not found.
 # Match the daemon/GUI behaviour: prefer a system76* LED if multiple exist.
@@ -30,10 +39,15 @@ if [ -n "$LED" ]; then
     MAX="$(cat "$LED/max_brightness")"
 fi
 
-[[ "$ENABLED" == "true" || "$ENABLED" == "false" ]] || { echo "bad enabled (true|false)" >&2; exit 1; }
-[[ "$ACTIVE" =~ ^[0-9]+$ ]]   && (( ACTIVE   >= 0 && ACTIVE   <= MAX ))   || { echo "bad active (0-$MAX)" >&2; exit 1; }
+TIME_RE='^([01][0-9]|2[0-3]):[0-5][0-9]$'
+
+[[ "$ENABLED"           == "true" || "$ENABLED"           == "false" ]] || { echo "bad enabled (true|false)" >&2; exit 1; }
+[[ "$ALWAYS_ON_ENABLED" == "true" || "$ALWAYS_ON_ENABLED" == "false" ]] || { echo "bad always_on_enabled (true|false)" >&2; exit 1; }
+[[ "$ACTIVE"   =~ ^[0-9]+$ ]] && (( ACTIVE   >= 0 && ACTIVE   <= MAX ))   || { echo "bad active (0-$MAX)" >&2; exit 1; }
 [[ "$INACTIVE" =~ ^[0-9]+$ ]] && (( INACTIVE >= 0 && INACTIVE <= MAX ))   || { echo "bad inactive (0-$MAX)" >&2; exit 1; }
-[[ "$IDLE" =~ ^[0-9]+$ ]]     && (( IDLE     >= 1 && IDLE     <= 86400 )) || { echo "bad idle_seconds (1-86400)" >&2; exit 1; }
+[[ "$IDLE"     =~ ^[0-9]+$ ]] && (( IDLE     >= 1 && IDLE     <= 86400 )) || { echo "bad idle_seconds (1-86400)" >&2; exit 1; }
+[[ "$ALWAYS_ON_FROM" =~ $TIME_RE ]] || { echo "bad always_on_from (HH:MM)" >&2; exit 1; }
+[[ "$ALWAYS_ON_TO"   =~ $TIME_RE ]] || { echo "bad always_on_to (HH:MM)" >&2; exit 1; }
 
 umask 022
 cat > /etc/kbd-backlight-typing.conf <<EOF
@@ -42,6 +56,9 @@ enabled = $ENABLED
 active_brightness = $ACTIVE
 inactive_brightness = $INACTIVE
 idle_seconds = $IDLE
+always_on_enabled = $ALWAYS_ON_ENABLED
+always_on_from = $ALWAYS_ON_FROM
+always_on_to = $ALWAYS_ON_TO
 EOF
 
 systemctl restart kbd-backlight-typing.service

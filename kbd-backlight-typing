@@ -3,7 +3,9 @@
 system76-typing-backlight daemon.
 
 Sets the keyboard backlight to a configurable "active" level on key activity
-and to an "inactive" level after a configurable idle timeout.
+and to an "inactive" level after a configurable idle timeout. Optionally
+keeps the backlight on regardless of activity during a configurable
+wall-clock window (e.g. at night).
 
 Reads /etc/kbd-backlight-typing.conf. Auto-discovers the keyboard LED under
 /sys/class/leds/.
@@ -17,7 +19,7 @@ import sys
 import signal
 import configparser
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 CONFIG = "/etc/kbd-backlight-typing.conf"
 EVENT_SIZE = 24  # struct input_event on 64-bit Linux
 
@@ -26,6 +28,9 @@ DEFAULTS = {
     "active": 128,
     "inactive": 0,
     "idle": 60,
+    "always_on_enabled": False,
+    "always_on_from": "21:00",
+    "always_on_to": "06:00",
 }
 
 
@@ -45,6 +50,36 @@ def read_max_brightness(led_path):
         return 255
 
 
+def parse_hhmm(s):
+    """Return minutes-since-midnight, or None on invalid input."""
+    try:
+        h, m = s.split(":")
+        h, m = int(h), int(m)
+    except (ValueError, AttributeError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h * 60 + m
+
+
+def in_window(from_str, to_str, now=None):
+    """Is `now` (a time.struct_time, default = local now) inside [from, to)?
+
+    Wraps over midnight when `from > to` (e.g. 21:00 -> 06:00).
+    A zero-length window (from == to) returns False.
+    """
+    f = parse_hhmm(from_str)
+    t = parse_hhmm(to_str)
+    if f is None or t is None or f == t:
+        return False
+    if now is None:
+        now = time.localtime()
+    cur = now.tm_hour * 60 + now.tm_min
+    if f < t:
+        return f <= cur < t
+    return cur >= f or cur < t
+
+
 def load_config(max_brightness):
     c = configparser.ConfigParser()
     c.read(CONFIG)
@@ -59,11 +94,17 @@ def load_config(max_brightness):
     def gb(k, d):
         return str(s.get(k, str(d))).lower() in ("true", "1", "yes", "on")
 
+    def gs(k, d):
+        return str(s.get(k, d))
+
     return {
         "enabled": gb("enabled", DEFAULTS["enabled"]),
         "active": max(0, min(max_brightness, gi("active_brightness", DEFAULTS["active"]))),
         "inactive": max(0, min(max_brightness, gi("inactive_brightness", DEFAULTS["inactive"]))),
         "idle": max(1, gi("idle_seconds", DEFAULTS["idle"])),
+        "always_on_enabled": gb("always_on_enabled", DEFAULTS["always_on_enabled"]),
+        "always_on_from": gs("always_on_from", DEFAULTS["always_on_from"]),
+        "always_on_to": gs("always_on_to", DEFAULTS["always_on_to"]),
     }
 
 
@@ -123,9 +164,8 @@ def main():
     for fd in fds:
         poll.register(fd, select.POLLIN)
 
-    set_brightness(led, cfg["inactive"])
-    state = "inactive"
-    last_activity = time.monotonic()
+    current = -1  # force first write
+    last_activity = 0.0  # epoch — initially "idle"
 
     while True:
         events = poll.poll(1000)
@@ -138,12 +178,16 @@ def main():
                 except BlockingIOError:
                     pass
             last_activity = now
-            if state != "active":
-                set_brightness(led, cfg["active"])
-                state = "active"
-        elif state == "active" and (now - last_activity) >= cfg["idle"]:
-            set_brightness(led, cfg["inactive"])
-            state = "inactive"
+
+        recently_active = (now - last_activity) < cfg["idle"]
+        schedule_active = cfg["always_on_enabled"] and in_window(
+            cfg["always_on_from"], cfg["always_on_to"]
+        )
+        desired = cfg["active"] if (recently_active or schedule_active) else cfg["inactive"]
+
+        if desired != current:
+            set_brightness(led, desired)
+            current = desired
 
 
 if __name__ == "__main__":

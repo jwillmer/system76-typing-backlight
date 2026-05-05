@@ -97,6 +97,9 @@ enabled = true
 active_brightness = 128
 inactive_brightness = 0
 idle_seconds = 60
+always_on_enabled = false
+always_on_from = 21:00
+always_on_to = 06:00
 EOF
         echo "  wrote default config: $CONF"
     else
