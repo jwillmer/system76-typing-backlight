@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""
+system76-typing-backlight daemon.
+
+Sets the keyboard backlight to a configurable "active" level on key activity
+and to an "inactive" level after a configurable idle timeout.
+
+Reads /etc/kbd-backlight-typing.conf. Auto-discovers the keyboard LED under
+/sys/class/leds/.
+"""
+
+import os
+import select
+import time
+import glob
+import sys
+import signal
+import configparser
+
+VERSION = "1.0.0"
+CONFIG = "/etc/kbd-backlight-typing.conf"
+EVENT_SIZE = 24  # struct input_event on 64-bit Linux
+
+DEFAULTS = {
+    "enabled": True,
+    "active": 128,
+    "inactive": 0,
+    "idle": 60,
+}
+
+
+def find_led():
+    candidates = sorted(glob.glob("/sys/class/leds/*kbd_backlight*"))
+    for c in candidates:
+        if "system76" in os.path.basename(c):
+            return c
+    return candidates[0] if candidates else None
+
+
+def read_max_brightness(led_path):
+    try:
+        with open(os.path.join(led_path, "max_brightness")) as f:
+            return int(f.read().strip())
+    except OSError:
+        return 255
+
+
+def load_config(max_brightness):
+    c = configparser.ConfigParser()
+    c.read(CONFIG)
+    s = c["settings"] if "settings" in c else {}
+
+    def gi(k, d):
+        try:
+            return int(s.get(k, str(d)))
+        except (TypeError, ValueError):
+            return d
+
+    def gb(k, d):
+        return str(s.get(k, str(d))).lower() in ("true", "1", "yes", "on")
+
+    return {
+        "enabled": gb("enabled", DEFAULTS["enabled"]),
+        "active": max(0, min(max_brightness, gi("active_brightness", DEFAULTS["active"]))),
+        "inactive": max(0, min(max_brightness, gi("inactive_brightness", DEFAULTS["inactive"]))),
+        "idle": max(1, gi("idle_seconds", DEFAULTS["idle"])),
+    }
+
+
+def set_brightness(led_path, value):
+    try:
+        with open(os.path.join(led_path, "brightness"), "w") as f:
+            f.write(str(value))
+    except OSError as e:
+        print(f"brightness write failed: {e}", file=sys.stderr)
+
+
+def open_keyboards():
+    fds = []
+    for path in glob.glob("/dev/input/by-path/*-event-kbd"):
+        try:
+            fds.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
+        except OSError as e:
+            print(f"open {path}: {e}", file=sys.stderr)
+    return fds
+
+
+def main():
+    if "--version" in sys.argv:
+        print(VERSION)
+        return
+
+    print(f"system76-typing-backlight {VERSION} starting", file=sys.stderr)
+
+    led = find_led()
+    if not led:
+        print("no *kbd_backlight* LED found under /sys/class/leds/", file=sys.stderr)
+        sys.exit(1)
+    print(f"using LED: {led}", file=sys.stderr)
+
+    max_brightness = read_max_brightness(led)
+    cfg = load_config(max_brightness)
+
+    def shutdown(_signum, _frame):
+        if cfg["enabled"]:
+            set_brightness(led, cfg["inactive"])
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+
+    if not cfg["enabled"]:
+        print("disabled by config; idling", file=sys.stderr)
+        signal.pause()
+        return
+
+    fds = open_keyboards()
+    if not fds:
+        print("no keyboard event devices found under /dev/input/by-path/", file=sys.stderr)
+        sys.exit(1)
+
+    poll = select.poll()
+    for fd in fds:
+        poll.register(fd, select.POLLIN)
+
+    set_brightness(led, cfg["inactive"])
+    state = "inactive"
+    last_activity = time.monotonic()
+
+    while True:
+        events = poll.poll(1000)
+        now = time.monotonic()
+        if events:
+            for fd, _ in events:
+                try:
+                    while os.read(fd, EVENT_SIZE * 64):
+                        pass
+                except BlockingIOError:
+                    pass
+            last_activity = now
+            if state != "active":
+                set_brightness(led, cfg["active"])
+                state = "active"
+        elif state == "active" and (now - last_activity) >= cfg["idle"]:
+            set_brightness(led, cfg["inactive"])
+            state = "inactive"
+
+
+if __name__ == "__main__":
+    main()

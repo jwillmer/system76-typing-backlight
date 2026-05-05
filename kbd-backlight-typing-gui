@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""GTK settings app for system76-typing-backlight."""
+
+import configparser
+import glob
+import os
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk  # noqa: E402
+
+GLib.set_prgname("kbd-backlight-typing-gui")
+GLib.set_application_name("Keyboard Backlight (Typing)")
+
+VERSION = "1.0.0"
+CONFIG = "/etc/kbd-backlight-typing.conf"
+APPLY = "/usr/local/bin/kbd-backlight-typing-apply"
+PROJECT_URL = "https://github.com/jwillmer/system76-typing-backlight"
+
+DEFAULTS = {
+    "enabled": True,
+    "active_brightness": 128,
+    "inactive_brightness": 0,
+    "idle_seconds": 60,
+}
+
+
+def detect_max_brightness():
+    candidates = sorted(glob.glob("/sys/class/leds/*kbd_backlight*"))
+    for c in candidates:
+        if "system76" in os.path.basename(c):
+            candidates = [c] + [x for x in candidates if x != c]
+            break
+    for path in candidates:
+        try:
+            with open(os.path.join(path, "max_brightness")) as f:
+                return int(f.read().strip())
+        except OSError:
+            continue
+    return 255
+
+
+def load_config():
+    c = configparser.ConfigParser()
+    try:
+        c.read(CONFIG)
+        s = c["settings"]
+        return {
+            "enabled": s.get("enabled", "true").lower() in ("true", "1", "yes", "on"),
+            "active_brightness": int(s.get("active_brightness", DEFAULTS["active_brightness"])),
+            "inactive_brightness": int(s.get("inactive_brightness", DEFAULTS["inactive_brightness"])),
+            "idle_seconds": int(s.get("idle_seconds", DEFAULTS["idle_seconds"])),
+        }
+    except Exception:
+        return dict(DEFAULTS)
+
+
+class App(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Keyboard Backlight (Typing)")
+        self.set_default_size(480, 340)
+        self.set_border_width(18)
+        self.set_icon_name("input-keyboard")
+
+        self.max_brightness = detect_max_brightness()
+        cfg = load_config()
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.add(outer)
+
+        grid = Gtk.Grid(column_spacing=14, row_spacing=14)
+        outer.pack_start(grid, True, True, 0)
+
+        def label(text):
+            lbl = Gtk.Label(label=text, xalign=0)
+            lbl.set_hexpand(False)
+            return lbl
+
+        grid.attach(label("Enabled"), 0, 0, 1, 1)
+        self.enabled = Gtk.Switch(active=cfg["enabled"])
+        self.enabled.set_halign(Gtk.Align.START)
+        grid.attach(self.enabled, 1, 0, 1, 1)
+
+        grid.attach(label("Active brightness"), 0, 1, 1, 1)
+        self.active = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, self.max_brightness, 1)
+        self.active.set_value(min(cfg["active_brightness"], self.max_brightness))
+        self.active.set_hexpand(True)
+        self.active.set_value_pos(Gtk.PositionType.RIGHT)
+        grid.attach(self.active, 1, 1, 1, 1)
+
+        grid.attach(label("Inactive brightness"), 0, 2, 1, 1)
+        self.inactive = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, self.max_brightness, 1)
+        self.inactive.set_value(min(cfg["inactive_brightness"], self.max_brightness))
+        self.inactive.set_hexpand(True)
+        self.inactive.set_value_pos(Gtk.PositionType.RIGHT)
+        grid.attach(self.inactive, 1, 2, 1, 1)
+
+        grid.attach(label("Idle seconds"), 0, 3, 1, 1)
+        self.idle = Gtk.SpinButton.new_with_range(1, 86400, 1)
+        self.idle.set_value(cfg["idle_seconds"])
+        grid.attach(self.idle, 1, 3, 1, 1)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+
+        about_btn = Gtk.Button(label="About")
+        about_btn.connect("clicked", self.on_about)
+        btn_box.pack_start(about_btn, False, False, 0)
+
+        reload_btn = Gtk.Button(label="Reload")
+        reload_btn.connect("clicked", self.on_reload)
+        btn_box.pack_start(reload_btn, False, False, 0)
+
+        save_btn = Gtk.Button(label="Apply")
+        save_btn.get_style_context().add_class("suggested-action")
+        save_btn.connect("clicked", self.on_save)
+        btn_box.pack_start(save_btn, False, False, 0)
+
+        outer.pack_start(btn_box, False, False, 0)
+
+        self.status = Gtk.Label(label="", xalign=0)
+        self.status.set_line_wrap(True)
+        outer.pack_start(self.status, False, False, 0)
+
+        self.connect("destroy", Gtk.main_quit)
+        self.show_all()
+
+    def on_reload(self, _):
+        cfg = load_config()
+        self.enabled.set_active(cfg["enabled"])
+        self.active.set_value(min(cfg["active_brightness"], self.max_brightness))
+        self.inactive.set_value(min(cfg["inactive_brightness"], self.max_brightness))
+        self.idle.set_value(cfg["idle_seconds"])
+        self.status.set_text("Reloaded from config.")
+
+    def on_save(self, _):
+        args = [
+            "pkexec", APPLY,
+            "true" if self.enabled.get_active() else "false",
+            str(int(self.active.get_value())),
+            str(int(self.inactive.get_value())),
+            str(int(self.idle.get_value())),
+        ]
+        try:
+            subprocess.run(args, check=True, capture_output=True, text=True)
+            self.status.set_text("Applied. Service restarted.")
+        except subprocess.CalledProcessError as e:
+            # pkexec exits 126 when the user dismisses the auth dialog.
+            if e.returncode == 126:
+                self.status.set_text("Cancelled.")
+            else:
+                self.status.set_text(f"Failed: {(e.stderr or '').strip() or e}")
+        except FileNotFoundError:
+            self.status.set_text("pkexec not found.")
+
+    def on_about(self, _):
+        dlg = Gtk.AboutDialog(transient_for=self, modal=True)
+        dlg.set_program_name("Keyboard Backlight (Typing)")
+        dlg.set_version(VERSION)
+        dlg.set_comments("Auto keyboard backlight on typing for System76 / Pop!_OS.")
+        dlg.set_website(PROJECT_URL)
+        dlg.set_website_label("Project on GitHub")
+        dlg.set_license_type(Gtk.License.MIT_X11)
+        dlg.set_logo_icon_name("input-keyboard")
+        dlg.run()
+        dlg.destroy()
+
+
+def main():
+    if "--version" in sys.argv:
+        print(VERSION)
+        return
+    App()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

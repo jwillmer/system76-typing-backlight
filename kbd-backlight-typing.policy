@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>system76-typing-backlight</vendor>
+  <vendor_url>https://github.com/jwillmer/system76-typing-backlight</vendor_url>
+
+  <action id="com.system76.kbdbacklight.apply">
+    <description>Apply keyboard backlight typing settings</description>
+    <message>Authentication is required to update keyboard backlight settings</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/kbd-backlight-typing-apply</annotate>
+  </action>
+</policyconfig>

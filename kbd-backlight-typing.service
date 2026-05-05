@@ -1,0 +1,28 @@
+[Unit]
+Description=Activity-driven keyboard backlight (system76-typing-backlight)
+Documentation=https://github.com/jwillmer/system76-typing-backlight
+After=multi-user.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kbd-backlight-typing
+Restart=on-failure
+RestartSec=2
+
+# Hardening — daemon only needs /sys LED write + /dev/input read.
+NoNewPrivileges=yes
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

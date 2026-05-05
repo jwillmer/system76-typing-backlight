@@ -1,0 +1,47 @@
+#!/bin/bash
+# Privileged config writer for system76-typing-backlight.
+# Invoked by the GUI via pkexec; validates inputs, writes
+# /etc/kbd-backlight-typing.conf, and restarts the daemon.
+
+set -euo pipefail
+
+if [ "$#" -ne 4 ]; then
+    echo "usage: $0 <enabled:true|false> <active:int> <inactive:int> <idle_seconds:1-86400>" >&2
+    exit 2
+fi
+
+ENABLED="$1"
+ACTIVE="$2"
+INACTIVE="$3"
+IDLE="$4"
+
+# Discover the keyboard LED's max brightness; fall back to 255 if not found.
+# Match the daemon/GUI behaviour: prefer a system76* LED if multiple exist.
+MAX=255
+LED=""
+for led in /sys/class/leds/*kbd_backlight*; do
+    [ -r "$led/max_brightness" ] || continue
+    if [[ "$(basename "$led")" == system76* ]]; then
+        LED="$led"; break
+    fi
+    [ -z "$LED" ] && LED="$led"
+done
+if [ -n "$LED" ]; then
+    MAX="$(cat "$LED/max_brightness")"
+fi
+
+[[ "$ENABLED" == "true" || "$ENABLED" == "false" ]] || { echo "bad enabled (true|false)" >&2; exit 1; }
+[[ "$ACTIVE" =~ ^[0-9]+$ ]]   && (( ACTIVE   >= 0 && ACTIVE   <= MAX ))   || { echo "bad active (0-$MAX)" >&2; exit 1; }
+[[ "$INACTIVE" =~ ^[0-9]+$ ]] && (( INACTIVE >= 0 && INACTIVE <= MAX ))   || { echo "bad inactive (0-$MAX)" >&2; exit 1; }
+[[ "$IDLE" =~ ^[0-9]+$ ]]     && (( IDLE     >= 1 && IDLE     <= 86400 )) || { echo "bad idle_seconds (1-86400)" >&2; exit 1; }
+
+umask 022
+cat > /etc/kbd-backlight-typing.conf <<EOF
+[settings]
+enabled = $ENABLED
+active_brightness = $ACTIVE
+inactive_brightness = $INACTIVE
+idle_seconds = $IDLE
+EOF
+
+systemctl restart kbd-backlight-typing.service

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Keyboard Backlight (Typing)
+GenericName=Keyboard Backlight Settings
+Comment=Auto keyboard backlight when typing
+Exec=/usr/local/bin/kbd-backlight-typing-gui
+Icon=input-keyboard
+Terminal=false
+Categories=Settings;HardwareSettings;GTK;
+Keywords=keyboard;backlight;led;typing;system76;
+StartupNotify=true
+StartupWMClass=kbd-backlight-typing-gui
